@@ -1,0 +1,56 @@
+import NextAuth, { type NextAuthOptions, type User as NextAuthUser } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
+import Apple from "next-auth/providers/apple";
+import { PrismaAdapter } from "@auth/prisma-adapter";
+import { prisma } from "@/lib/prisma";
+import { compare } from "bcryptjs";
+
+export const authOptions: NextAuthOptions = {
+  adapter: PrismaAdapter(prisma),
+  session: { strategy: "jwt" },
+  providers: [
+    Credentials({
+      name: "Credentials",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null;
+        const user = await prisma.user.findUnique({ where: { email: credentials.email } });
+        if (!user?.passwordHash) return null;
+        const ok = await compare(credentials.password, user.passwordHash);
+        if (!ok) return null;
+        const authed: NextAuthUser = {
+          id: user.id,
+          name: user.name ?? undefined,
+          email: user.email ?? undefined,
+        };
+        return authed;
+      },
+    }),
+    ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+      ? [
+          Google({
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+          }),
+        ]
+      : []),
+    ...(process.env.APPLE_CLIENT_ID && process.env.APPLE_CLIENT_SECRET
+      ? [
+          Apple({
+            clientId: process.env.APPLE_CLIENT_ID,
+            clientSecret: process.env.APPLE_CLIENT_SECRET,
+          }),
+        ]
+      : []),
+  ],
+  pages: { signIn: "/login" },
+};
+
+const handler = NextAuth(authOptions);
+export { handler as GET, handler as POST };
+
+
