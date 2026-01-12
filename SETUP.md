@@ -6,7 +6,10 @@ Create a `.env.local` file in the root directory with the following variables:
 
 ```bash
 # Database
-DATABASE_URL="file:./dev.db"
+# Prisma schema is configured for PostgreSQL (see `prisma/schema.prisma`)
+# Example (local Postgres):
+# DATABASE_URL="postgresql://postgres:postgres@localhost:5432/novaquill?schema=public"
+DATABASE_URL="postgresql://username:password@localhost:5432/novaquill?schema=public"
 
 # NextAuth Configuration
 NEXTAUTH_URL="http://localhost:3000"
