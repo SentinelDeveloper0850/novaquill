@@ -1,8 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
+  const { status } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.replace("/login?next=/dashboard");
+    }
+  }, [status, router]);
+
   const [state, setState] = useState<{ subscription: "FREE" | "PRO" | "ANON"; used: number; limit: number | null } | null>(null);
   useEffect(() => {
     fetch("/api/usage").then((r) => r.json()).then(setState).catch(() => setState(null));
@@ -17,6 +28,15 @@ export default function DashboardPage() {
     fetch("/api/documents").then((r) => r.json()).then((d) => setDocs(d || [])).catch(() => setDocs([]));
     fetch("/api/analytics").then((r) => r.json()).then((d) => setAnalytics(d || [])).catch(() => setAnalytics([]));
   }, []);
+
+  if (status === "loading") {
+    return (
+      <div className="max-w-5xl mx-auto px-6 py-12">
+        <h1 className="text-2xl font-semibold mb-4">Dashboard</h1>
+        <div className="text-sm text-foreground/60">Loading…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">

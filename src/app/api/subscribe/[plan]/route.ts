@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { buildForm, buildSignature, getPayfastEndpoint } from "@/lib/payfast";
 import { eurToZar } from "@/lib/fx";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(
   _req: NextRequest,
@@ -16,6 +17,8 @@ export async function GET(
     login.searchParams.set("next", `/api/subscribe/${plan}`);
     return Response.redirect(login.toString(), 302);
   }
+  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
+  if (!user) return new Response("Unauthorized", { status: 401 });
 
   const env: "sandbox" | "live" = (process.env.PAYFAST_ENV as "sandbox" | "live") === "live" ? "live" : "sandbox";
   const merchant_id = process.env.PAYFAST_MERCHANT_ID || "";
@@ -32,6 +35,9 @@ export async function GET(
   const cancel_url = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/pricing`;
   const notify_url = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/payfast/itn`;
 
+  // Used for reconciliation / ITN idempotency
+  const m_payment_id = `nq_${user.id}_${plan}_${Date.now()}`;
+
   const paramsMap = {
     merchant_id,
     merchant_key,
@@ -43,6 +49,10 @@ export async function GET(
     email_address: session.user.email || "",
     amount: amountZar.toFixed(2),
     item_name,
+    m_payment_id,
+    // Custom fields to link ITN back to our user/plan
+    custom_str1: user.id,
+    custom_str2: isAnnual ? "annual" : "monthly",
     // Recurring subscription
     subscription_type: 1,
     billing_date: new Date().toISOString().slice(0, 10),
