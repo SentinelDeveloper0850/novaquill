@@ -1,133 +1,119 @@
 # NovaQuill Setup Guide
 
-## Environment Variables
+## Supported local development database story
 
-Create a `.env.local` file in the root directory with the following variables:
+NovaQuill uses **PostgreSQL** in `prisma/schema.prisma`, and the supported local setup is:
+
+- **Dockerized PostgreSQL 16** via `docker-compose.dev.yml`
+
+Using a local Postgres container keeps local/dev/prod behavior aligned and avoids drift.
+
+## Prerequisites
+
+- Node.js 20+
+- npm 10+
+- Docker + Docker Compose
+
+## 1) Start local PostgreSQL
 
 ```bash
-# Database
-# Prisma schema is configured for PostgreSQL (see `prisma/schema.prisma`)
-# Example (local Postgres):
-# DATABASE_URL="postgresql://postgres:postgres@localhost:5432/novaquill?schema=public"
-DATABASE_URL="postgresql://username:password@localhost:5432/novaquill?schema=public"
+docker compose -f docker-compose.dev.yml up -d
+```
 
-# NextAuth Configuration
+This starts PostgreSQL on `localhost:5432` with:
+
+- database: `novaquill`
+- user: `postgres`
+- password: `postgres`
+
+To stop it:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+To stop and remove the DB volume:
+
+```bash
+docker compose -f docker-compose.dev.yml down -v
+```
+
+## 2) Create `.env.local`
+
+Create a `.env.local` file in the project root:
+
+```bash
+# Database (PostgreSQL)
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/novaquill?schema=public"
+
+# App URL + auth
 NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET="your-secret-key-here"
+NEXTAUTH_SECRET="replace-with-a-long-random-secret"
 
-# Storage Encryption
-STORAGE_ENCRYPTION_KEY="your-32-byte-base64-encryption-key"
+# Storage encryption (AES-256-GCM key in base64)
+STORAGE_ENCRYPTION_KEY="replace-with-32-byte-base64-key"
 
-# OAuth Providers (Optional)
-GOOGLE_CLIENT_ID="your-google-client-id"
-GOOGLE_CLIENT_SECRET="your-google-client-secret"
+# Optional auth providers
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+APPLE_CLIENT_ID=""
+APPLE_CLIENT_SECRET=""
 
-APPLE_CLIENT_ID="your-apple-client-id"
-APPLE_CLIENT_SECRET="your-apple-client-secret"
+# Optional additional allowed origins (hostnames, comma-separated)
+ALLOWED_ORIGINS="localhost:3000"
 
-# Additional Allowed Origins (Optional)
-ALLOWED_ORIGINS="localhost:3000,example.com"
+# Optional PayFast sandbox values
+PAYFAST_ENV="sandbox"
+PAYFAST_MERCHANT_ID=""
+PAYFAST_MERCHANT_KEY=""
+PAYFAST_PASSPHRASE=""
 
-# Environment
 NODE_ENV="development"
 ```
 
-## Generating Encryption Key
-
-Generate a 32-byte encryption key for AES-256-GCM:
+### Generate required secrets
 
 ```bash
-# Using Node.js
+# NEXTAUTH_SECRET (base64)
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
-# Using OpenSSL
+# STORAGE_ENCRYPTION_KEY (base64, 32 bytes)
 openssl rand -base64 32
 ```
 
-## Installation
+## 3) Install dependencies
 
-1. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Generate Prisma client:
+## 4) Initialize Prisma and database schema
+
 ```bash
 npm run postinstall
-```
-
-3. Run database migrations:
-```bash
 npx prisma db push
 ```
 
-4. Start development server:
+## 5) Start the app
+
 ```bash
 npm run dev
 ```
 
-## Features Implemented
+Open http://localhost:3000.
 
-### ✅ Critical Fixes
-- Fixed missing logo file issue
-- Added proper error handling throughout the app
-- Implemented comprehensive file validation
-- Added loading states and user feedback
-
-### ✅ Security Enhancements
-- File type validation using magic bytes
-- File size limits (50MB upload, 100MB processing)
-- Improved rate limiting with memory management
-- Enhanced origin validation
-
-### ✅ User Experience
-- Drag and drop file upload
-- Touch support for mobile devices
-- Loading spinners and progress indicators
-- Better error messages and validation feedback
-- Accessibility improvements (ARIA labels, keyboard navigation)
-
-### ✅ Code Quality
-- Type safety improvements
-- Constants for magic numbers
-- Proper error boundaries
-- Memory leak prevention
-- Retry logic for PDF processing
-
-### ✅ Mobile Support
-- Touch event handling for signature drawing
-- Responsive design improvements
-- Mobile-optimized interactions
-
-## Production Considerations
-
-1. **Rate Limiting**: Consider implementing Redis-based rate limiting for production
-2. **File Storage**: Implement cloud storage (AWS S3, Google Cloud Storage) for production
-3. **Monitoring**: Add logging and error tracking (Sentry, LogRocket)
-4. **CDN**: Use a CDN for static assets and PDF worker files
-5. **Database**: Use PostgreSQL or MySQL for production instead of SQLite
-
-## Testing
-
-Run the linter and type checker:
+## Quality checks
 
 ```bash
 npm run lint
-npx tsc --noEmit
+npm run typecheck
 ```
 
-## Deployment
+## Runtime artifacts
 
-1. Build the application:
-```bash
-npm run build
-```
+Local runtime artifacts are intentionally ignored by git:
 
-2. Start production server:
-```bash
-npm start
-```
+- `prisma/dev.db`
+- `storage/`
 
-## Support
-
-For issues or questions, please check the main README.md file or create an issue in the repository.
+Do not commit runtime-generated data.
