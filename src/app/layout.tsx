@@ -5,6 +5,17 @@ import Providers from "./providers";
 import Header from "@/components/Header";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
+function getSiteUrl(): string {
+  const candidate = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+  try {
+    return new URL(candidate).toString();
+  } catch {
+    return "http://localhost:3000";
+  }
+}
+
+const siteUrl = getSiteUrl();
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -19,12 +30,12 @@ export const metadata: Metadata = {
   title: "NovaQuill — Upload. Sign. Download.",
   description:
     "NovaQuill is a minimalist, global e‑signing tool. Upload → Sign → Download.",
-  metadataBase: new URL("https://novaquill.com"),
+  metadataBase: new URL(siteUrl),
   openGraph: {
     title: "NovaQuill — Upload. Sign. Download.",
     description:
       "Ultra-simple e‑signing with ShapeAssist real-time smoothing. Free and Pro.",
-    url: "https://novaquill.com",
+    url: siteUrl,
     siteName: "NovaQuill",
   },
   icons: { icon: "/favicon.ico" },

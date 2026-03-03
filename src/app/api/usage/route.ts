@@ -24,17 +24,24 @@ export async function GET() {
 	);
 }
 
-export async function POST() {
+export async function POST(request: Request) {
 	// Enforce origin and rate limit
-	if (!isAllowedOrigin(new Request("http://local"))) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
-	const key = "usage:" + Date.now().toString().slice(0, 10);
-	if (!(await rateLimitOk(key, 200, 60_000))) return new Response(JSON.stringify({ error: "Rate limit" }), { status: 429 });
+	if (!isAllowedOrigin(request)) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+	const ip = (request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "local").split(",")[0]!.trim();
+	if (!(await rateLimitOk(`usage:ip:${ip}`, 200, 60_000))) {
+		return new Response(JSON.stringify({ error: "Rate limit" }), { status: 429 });
+	}
 	const session = await getServerSession(authOptions);
 	if (!session?.user?.email) {
 		return new Response(JSON.stringify({ error: "Not authenticated" }), { status: 401 });
 	}
 	const user = await prisma.user.findUnique({ where: { email: session.user.email } });
 	if (!user) return new Response("Not found", { status: 404 });
+
+	// Additional per-user rate limit to prevent repeated increments (double-clicks, retries, abuse)
+	if (!(await rateLimitOk(`usage:user:${user.id}`, 30, 60_000))) {
+		return new Response(JSON.stringify({ error: "Rate limit" }), { status: 429 });
+	}
 	const currentYm = ym();
 	const isPro = user.subscription === "PRO";
 	const currentUsed = user.usageYearMonth === currentYm ? user.docsUsedThisMonth : 0;

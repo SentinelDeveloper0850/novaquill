@@ -23,6 +23,9 @@ model User {
 
   // Subscription and usage tracking
   subscription  SubscriptionStatus @default(FREE)
+  subscriptionPlan SubscriptionPlan?
+  lastPaymentAt DateTime?
+  payfastLastPaymentId String?
   docsUsedThisMonth Int            @default(0)
   usageYearMonth  Int?             // e.g., 202508 for August 2025
 }
@@ -69,6 +72,11 @@ enum SubscriptionStatus {
   PRO
 }
 
+enum SubscriptionPlan {
+  MONTHLY
+  ANNUAL
+}
+
 model Document {
   id        String   @id @default(cuid())
   userId    String
@@ -84,6 +92,14 @@ model Document {
 model EventCounter {
   name  String @id
   count Int    @default(0)
+}
+
+// PayFast notifications for idempotency/auditing (no cardholder data)
+model PayfastEvent {
+  id          String   @id @default(cuid())
+  pfPaymentId String   @unique
+  payload     Json
+  createdAt   DateTime @default(now())
 }
 
 
