@@ -1,6 +1,6 @@
 "use client";
 
-import { signIn } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { track } from "@/lib/track";
@@ -12,6 +12,11 @@ function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next");
+  const { status } = useSession();
+  
+  if (status === "authenticated") {
+    router.push(next || "/dashboard");
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,6 +28,10 @@ function LoginForm() {
     }
     track("signup_login");
     router.push(next || "/dashboard");
+  }
+
+  if (status === "authenticated") {
+    return <div>Redirecting...</div>;
   }
 
   return (
