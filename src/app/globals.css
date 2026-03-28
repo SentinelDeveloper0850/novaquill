@@ -11,6 +11,26 @@
   --color-accent: #248BAA;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* NovaQuill auth / marketing palette (scoped via nq- utilities) */
+  --color-nq-background: #0b0f0f;
+  --color-nq-surface: #0b0f0f;
+  --color-nq-on-surface: #fafdfc;
+  --color-nq-on-surface-variant: #a8acab;
+  --color-nq-surface-container-lowest: #000000;
+  --color-nq-surface-container-low: #101414;
+  --color-nq-surface-container: #161a1a;
+  --color-nq-surface-container-high: #1b2121;
+  --color-nq-surface-container-highest: #212727;
+  --color-nq-outline: #727676;
+  --color-nq-outline-variant: #454948;
+  --color-nq-primary: #58e7fb;
+  --color-nq-primary-container: #1cc2d6;
+  --color-nq-on-primary-container: #00363d;
+  --color-nq-error: #ff716c;
+  --font-nq-headline: var(--font-headline), ui-sans-serif, system-ui, sans-serif;
+  --font-nq-body: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-nq-label: var(--font-body), ui-sans-serif, system-ui, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,4 +44,12 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Auth pages — gradient CTA, hover glow */
+.nq-signature-gradient {
+  background: linear-gradient(135deg, #58e7fb 0%, #1cc2d6 100%);
+}
+.nq-primary-glow:hover {
+  box-shadow: 0 0 15px rgba(88, 231, 251, 0.3);
 }

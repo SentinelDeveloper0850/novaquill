@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Inter, Manrope } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
-import Header from "@/components/Header";
+import ConditionalHeader from "@/components/ConditionalHeader";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 function getSiteUrl(): string {
@@ -24,6 +24,18 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-headline",
+  weight: ["400", "600", "700", "800"],
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-body",
+  weight: ["400", "500", "600"],
 });
 
 export const metadata: Metadata = {
@@ -48,10 +60,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} ${manrope.variable} ${inter.variable} antialiased`}
+      >
         <ErrorBoundary>
           <Providers>
-            <Header />
+            <ConditionalHeader />
             {children}
           </Providers>
         </ErrorBoundary>
