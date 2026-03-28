@@ -28,6 +28,9 @@
   --color-nq-primary-container: #1cc2d6;
   --color-nq-on-primary-container: #00363d;
   --color-nq-error: #ff716c;
+  --color-nq-on-primary: #00515b;
+  --color-nq-primary-dim: #45d8ed;
+  --color-nq-secondary: #00d5fe;
   --font-nq-headline: var(--font-headline), ui-sans-serif, system-ui, sans-serif;
   --font-nq-body: var(--font-body), ui-sans-serif, system-ui, sans-serif;
   --font-nq-label: var(--font-body), ui-sans-serif, system-ui, sans-serif;
@@ -52,4 +55,11 @@ body {
 }
 .nq-primary-glow:hover {
   box-shadow: 0 0 15px rgba(88, 231, 251, 0.3);
+}
+.nq-landing-glass-header {
+  background: rgba(39, 45, 45, 0.6);
+  backdrop-filter: blur(24px);
+}
+.nq-landing-signature-glow {
+  box-shadow: 0 0 20px rgba(88, 231, 251, 0.15);
 }

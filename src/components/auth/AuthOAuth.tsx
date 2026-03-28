@@ -4,9 +4,6 @@ import { signIn } from "next-auth/react";
 import { FaApple } from "react-icons/fa6";
 import { FcGoogle } from "react-icons/fc";
 
-const GOOGLE_IMG =
-  "https://lh3.googleusercontent.com/aida-public/AB6AXuDChUskBGYqxtLLn2UgFFmLDYRlNlC0ES8_ytXDeRP5e_VdsALy6FoBnHoTqip-4kffUVtC2UU1DBHdxl8bu1X6I2xQ3XhtN8JwdtdgpghA5rL5RDC4ekLD6ACzTh-MPM78NiRhDxVNNgdGybgkHbHokmqaKp20-fGSOldyuAwnRKf8TQ6dZokC1XG-HHU-ejjfgw6v0B3ybGXGW3OjhkPJnFSGs-8sqn2oKjwPZ8rs1XCzvg5jPE6eOsj_yc4Cw4wOEPWXHZRlguMR";
-
 type AuthOAuthDividerProps = {
   label: string;
 };
