@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type SignatureKind = "draw" | "type" | "upload";
 
@@ -9,50 +9,227 @@ const CANVAS_WIDTH = 600;
 const CANVAS_HEIGHT = 200;
 const DRAWING_LINE_WIDTH = 2;
 const DRAWING_COLOR = "#111";
-const BACKGROUND_COLOR = "#fff";
+const MAX_SAVED_SIGNATURES = 8;
+const SIGNATURE_STORAGE_KEY = "novaquill.savedSignatures.v1";
+
+type Point = { x: number; y: number };
+type SavedSignature = {
+  id: string;
+  name: string;
+  dataUrl: string;
+  createdAt: string;
+};
+
+function distance(a: Point, b: Point): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function simplifyPoints(points: Point[], minDistance: number): Point[] {
+  if (points.length <= 2) return points;
+  const simplified: Point[] = [points[0]!];
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const candidate = points[i]!;
+    const prev = simplified[simplified.length - 1]!;
+    if (distance(prev, candidate) >= minDistance) {
+      simplified.push(candidate);
+    }
+  }
+  simplified.push(points[points.length - 1]!);
+  return simplified;
+}
+
+function smoothPoints(points: Point[], passes: number): Point[] {
+  if (points.length <= 2 || passes <= 0) return points;
+  let current = points;
+  for (let pass = 0; pass < passes; pass += 1) {
+    const next: Point[] = [current[0]!];
+    for (let i = 1; i < current.length - 1; i += 1) {
+      const prev = current[i - 1]!;
+      const center = current[i]!;
+      const after = current[i + 1]!;
+      next.push({
+        x: (prev.x + center.x * 2 + after.x) / 4,
+        y: (prev.y + center.y * 2 + after.y) / 4,
+      });
+    }
+    next.push(current[current.length - 1]!);
+    current = next;
+  }
+  return current;
+}
+
+function refineStroke(points: Point[], assistStrength: number): Point[] {
+  const clampedStrength = Math.max(0, Math.min(1, assistStrength));
+  const simplified = simplifyPoints(points, 0.5 + clampedStrength * 2.2);
+  const passes = Math.max(1, Math.round(1 + clampedStrength * 3));
+  return smoothPoints(simplified, passes);
+}
+
+function drawStroke(ctx: CanvasRenderingContext2D, points: Point[]): void {
+  if (points.length === 0) return;
+  if (points.length === 1) {
+    const point = points[0]!;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, DRAWING_LINE_WIDTH / 1.4, 0, Math.PI * 2);
+    ctx.fillStyle = DRAWING_COLOR;
+    ctx.fill();
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(points[0]!.x, points[0]!.y);
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const current = points[i]!;
+    const next = points[i + 1]!;
+    const xc = (current.x + next.x) / 2;
+    const yc = (current.y + next.y) / 2;
+    ctx.quadraticCurveTo(current.x, current.y, xc, yc);
+  }
+  const end = points[points.length - 1]!;
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+}
+
+function trimCanvas(canvas: HTMLCanvasElement, padding = 10): HTMLCanvasElement {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+
+  const { width, height } = canvas;
+  const pixels = ctx.getImageData(0, 0, width, height).data;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = pixels[(y * width + x) * 4 + 3];
+      if (alpha > 8) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return canvas;
+  }
+
+  const cropX = Math.max(0, minX - padding);
+  const cropY = Math.max(0, minY - padding);
+  const cropWidth = Math.min(width - cropX, maxX - minX + 1 + padding * 2);
+  const cropHeight = Math.min(height - cropY, maxY - minY + 1 + padding * 2);
+
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, cropWidth);
+  out.height = Math.max(1, cropHeight);
+  const outCtx = out.getContext("2d");
+  if (!outCtx) return canvas;
+  outCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+  return out;
+}
+
+function safeReadSavedSignatures(): SavedSignature[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(SIGNATURE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as SavedSignature[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item) =>
+        typeof item?.id === "string" &&
+        typeof item?.name === "string" &&
+        typeof item?.dataUrl === "string" &&
+        typeof item?.createdAt === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function safeWriteSavedSignatures(signatures: SavedSignature[]): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(SIGNATURE_STORAGE_KEY, JSON.stringify(signatures.slice(0, MAX_SAVED_SIGNATURES)));
+}
 
 export default function SignatureTools({ onSignature }: { onSignature: (dataUrl: string) => void }) {
   const [mode, setMode] = useState<SignatureKind>("draw");
   const [typed, setTyped] = useState("");
   const [font, setFont] = useState("cursive");
+  const [name, setName] = useState("");
+  const [saveForFuture, setSaveForFuture] = useState(true);
+  const [assistEnabled, setAssistEnabled] = useState(true);
+  const [assistStrength, setAssistStrength] = useState(0.55);
+  const [savedSignatures, setSavedSignatures] = useState<SavedSignature[]>([]);
+  const [uploadedDataUrl, setUploadedDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawing = useRef(false);
+  const drawingRef = useRef(false);
+  const strokesRef = useRef<Point[][]>([]);
+  const currentStrokeRef = useRef<Point[]>([]);
 
-  // Initialize canvas context
-  useEffect(() => {
+  const renderedStrokes = useMemo(() => {
+    if (!assistEnabled) return strokesRef.current;
+    return strokesRef.current.map((stroke) => refineStroke(stroke, assistStrength));
+  }, [assistEnabled, assistStrength, mode]);
+
+  const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       setError("Failed to initialize canvas");
       return;
     }
-    
-    // Clear and setup canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = BACKGROUND_COLOR;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = DRAWING_COLOR;
     ctx.lineWidth = DRAWING_LINE_WIDTH;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-  }, [mode]);
+
+    const source = assistEnabled
+      ? strokesRef.current.map((stroke) => refineStroke(stroke, assistStrength))
+      : strokesRef.current;
+    source.forEach((stroke) => drawStroke(ctx, stroke));
+  }, [assistEnabled, assistStrength]);
+
+  useEffect(() => {
+    redrawCanvas();
+  }, [redrawCanvas, renderedStrokes, mode]);
+
+  useEffect(() => {
+    setSavedSignatures(safeReadSavedSignatures());
+  }, []);
 
   const clearCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = BACKGROUND_COLOR;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = DRAWING_COLOR;
-    ctx.lineWidth = DRAWING_LINE_WIDTH;
+    strokesRef.current = [];
+    currentStrokeRef.current = [];
+    redrawCanvas();
+  };
+
+  const saveSignatureIfNeeded = (dataUrl: string) => {
+    if (!saveForFuture) return;
+    const existing = safeReadSavedSignatures();
+    if (existing.some((item) => item.dataUrl === dataUrl)) {
+      setSavedSignatures(existing);
+      return;
+    }
+    const trimmedName = name.trim();
+    const newSignature: SavedSignature = {
+      id: crypto.randomUUID(),
+      name: trimmedName || `Signature ${existing.length + 1}`,
+      dataUrl,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [newSignature, ...existing].slice(0, MAX_SAVED_SIGNATURES);
+    safeWriteSavedSignatures(next);
+    setSavedSignatures(next);
   };
 
   const toDataUrl = async () => {
@@ -61,11 +238,32 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     
     try {
       if (mode === "draw") {
-        const canvas = canvasRef.current;
-        if (!canvas) {
+        if (!strokesRef.current.length) {
+          throw new Error("Draw your signature first");
+        }
+        const output = document.createElement("canvas");
+        output.width = CANVAS_WIDTH;
+        output.height = CANVAS_HEIGHT;
+        const outputCtx = output.getContext("2d");
+        if (!outputCtx) {
           throw new Error("Canvas not available");
         }
-        onSignature(canvas.toDataURL("image/png"));
+
+        outputCtx.clearRect(0, 0, output.width, output.height);
+        outputCtx.strokeStyle = DRAWING_COLOR;
+        outputCtx.lineWidth = DRAWING_LINE_WIDTH;
+        outputCtx.lineCap = "round";
+        outputCtx.lineJoin = "round";
+
+        const source = assistEnabled
+          ? strokesRef.current.map((stroke) => refineStroke(stroke, assistStrength))
+          : strokesRef.current;
+        source.forEach((stroke) => drawStroke(outputCtx, stroke));
+
+        const cropped = trimCanvas(output);
+        const dataUrl = cropped.toDataURL("image/png");
+        onSignature(dataUrl);
+        saveSignatureIfNeeded(dataUrl);
       } else if (mode === "type") {
         if (!typed.trim()) {
           throw new Error("Please enter text for your signature");
@@ -80,17 +278,23 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
           throw new Error("Failed to create temporary canvas");
         }
         
-        ctx.fillStyle = BACKGROUND_COLOR;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = DRAWING_COLOR;
         ctx.font = `64px ${font}`;
         ctx.textBaseline = "middle";
         ctx.textAlign = "left";
         ctx.fillText(typed.trim(), 20, canvas.height / 2);
-        
-        onSignature(canvas.toDataURL("image/png"));
+
+        const cropped = trimCanvas(canvas);
+        const dataUrl = cropped.toDataURL("image/png");
+        onSignature(dataUrl);
+        saveSignatureIfNeeded(dataUrl);
       } else if (mode === "upload") {
-        throw new Error("Please select an image file first");
+        if (!uploadedDataUrl) {
+          throw new Error("Please select an image file first");
+        }
+        onSignature(uploadedDataUrl);
+        saveSignatureIfNeeded(uploadedDataUrl);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create signature";
@@ -120,7 +324,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     reader.onload = () => {
       if (typeof reader.result === "string") {
         setError(null);
-        onSignature(reader.result);
+        setUploadedDataUrl(reader.result);
       }
     };
     reader.onerror = () => {
@@ -129,70 +333,106 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     reader.readAsDataURL(file);
   };
 
-  // Get coordinates from mouse or touch event
-  const getCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const removeSavedSignature = (id: string) => {
+    const next = savedSignatures.filter((item) => item.id !== id);
+    setSavedSignatures(next);
+    safeWriteSavedSignatures(next);
+  };
+
+  const useSavedSignature = (dataUrl: string) => {
+    onSignature(dataUrl);
+    setError(null);
+  };
+
+  // Get coordinates from pointer event
+  const getCoordinates = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    
     const rect = canvas.getBoundingClientRect();
-    
-    if ('touches' in e) {
-      // Touch event
-      const touch = e.touches[0];
-      return {
-        x: touch.clientX - rect.left,
-        y: touch.clientY - rect.top
-      };
-    } else {
-      // Mouse event
-      return {
-        x: e.nativeEvent.offsetX,
-        y: e.nativeEvent.offsetY
-      };
-    }
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
   };
 
-  const handleStart = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const handleStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const coords = getCoordinates(e);
     if (!coords) return;
-    
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-    
-    drawing.current = true;
-    ctx.beginPath();
-    ctx.moveTo(coords.x, coords.y);
+
+    drawingRef.current = true;
+    const stroke = [coords];
+    currentStrokeRef.current = stroke;
+    strokesRef.current = [...strokesRef.current, stroke];
+    redrawCanvas();
   };
 
-  const handleMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const handleMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    if (!drawing.current) return;
-    
+    if (!drawingRef.current) return;
     const coords = getCoordinates(e);
     if (!coords) return;
-    
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-    
-    const x = coords.x;
-    const y = coords.y;
-    
-    // Simple smoothing: draw short quadratic curve to the next point
-    ctx.quadraticCurveTo(x, y, x, y);
-    ctx.stroke();
+
+    currentStrokeRef.current = [...currentStrokeRef.current, coords];
+    const strokesWithoutCurrent = strokesRef.current.slice(0, -1);
+    strokesRef.current = [...strokesWithoutCurrent, currentStrokeRef.current];
+    redrawCanvas();
   };
 
-  const handleEnd = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const handleEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    drawing.current = false;
+    drawingRef.current = false;
+    currentStrokeRef.current = [];
+    redrawCanvas();
   };
 
   return (
     <div className="grid gap-4">
-      <div className="flex gap-2">
+      <div className="rounded-lg border border-foreground/15 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Saved signatures</h3>
+          <span className="text-xs text-foreground/60">{savedSignatures.length} saved</span>
+        </div>
+        {savedSignatures.length === 0 ? (
+          <p className="text-xs text-foreground/65">
+            Save a signature once and reuse it instantly in future documents.
+          </p>
+        ) : (
+          <div className="grid gap-2 max-h-44 overflow-auto pr-1">
+            {savedSignatures.map((signature) => (
+              <div
+                key={signature.id}
+                className="rounded-md border border-foreground/15 p-2 flex items-center justify-between gap-2"
+              >
+                <button
+                  onClick={() => useSavedSignature(signature.dataUrl)}
+                  className="flex items-center gap-2 min-w-0 text-left hover:opacity-90"
+                  aria-label={`Use saved signature ${signature.name}`}
+                >
+                  <div className="h-10 w-24 rounded bg-white border border-foreground/10 flex items-center justify-center overflow-hidden">
+                    <img src={signature.dataUrl} alt={signature.name} className="max-h-full max-w-full object-contain" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium truncate">{signature.name}</p>
+                    <p className="text-[11px] text-foreground/60">Tap to use</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => removeSavedSignature(signature.id)}
+                  className="text-xs rounded-md border px-2 py-1 hover:bg-foreground/5"
+                  aria-label={`Remove saved signature ${signature.name}`}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
         <button 
           onClick={() => setMode("draw")} 
           className={`px-3 py-1 rounded-md border transition-colors ${
@@ -239,20 +479,47 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
               ref={canvasRef}
               width={CANVAS_WIDTH}
               height={CANVAS_HEIGHT}
-              className="bg-white cursor-crosshair touch-none"
-              onMouseDown={handleStart}
-              onMouseMove={handleMove}
-              onMouseUp={handleEnd}
-              onMouseLeave={handleEnd}
-              onTouchStart={handleStart}
-              onTouchMove={handleMove}
-              onTouchEnd={handleEnd}
+              className="bg-white cursor-crosshair touch-none w-full h-auto max-w-full"
+              onPointerDown={handleStart}
+              onPointerMove={handleMove}
+              onPointerUp={handleEnd}
+              onPointerLeave={handleEnd}
+              onPointerCancel={handleEnd}
+              style={{ touchAction: "none" }}
               role="img"
               aria-label="Signature drawing canvas"
             />
           </div>
+          <div className="space-y-2">
+            <label className="flex items-center justify-between text-xs">
+              <span className="font-medium">Stroke cleanup assist</span>
+              <input
+                type="checkbox"
+                checked={assistEnabled}
+                onChange={(e) => setAssistEnabled(e.target.checked)}
+                aria-label="Enable stroke cleanup assist"
+              />
+            </label>
+            {assistEnabled && (
+              <div className="space-y-1">
+                <label htmlFor="assist-strength" className="text-xs text-foreground/70">
+                  Assist strength: {(assistStrength * 100).toFixed(0)}%
+                </label>
+                <input
+                  id="assist-strength"
+                  type="range"
+                  min={15}
+                  max={90}
+                  value={Math.round(assistStrength * 100)}
+                  onChange={(e) => setAssistStrength(Number(e.target.value) / 100)}
+                  className="w-full"
+                  aria-label="Stroke cleanup strength"
+                />
+              </div>
+            )}
+          </div>
           <p className="text-xs text-foreground/60">
-            Use mouse or touch to draw your signature
+            Draw naturally, then optionally smooth rough strokes for a cleaner signature.
           </p>
         </div>
       )}
@@ -305,8 +572,38 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
           <p className="text-xs text-foreground/70">
             Supported formats: JPG, PNG, GIF. Max size: 5MB.
           </p>
+          {uploadedDataUrl && (
+            <div className="rounded-md border border-foreground/15 p-2">
+              <p className="text-xs text-foreground/70 mb-2">Preview</p>
+              <div className="h-14 bg-white rounded border border-foreground/10 flex items-center justify-center">
+                <img src={uploadedDataUrl} alt="Uploaded signature preview" className="max-h-full max-w-full object-contain" />
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      <div className="rounded-lg border border-foreground/15 p-3 space-y-3">
+        <label htmlFor="signature-name" className="block text-xs font-medium">
+          Save name (optional)
+        </label>
+        <input
+          id="signature-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Personal signature"
+          className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:border-transparent"
+        />
+        <label className="flex items-center justify-between text-sm">
+          <span>Save this signature for future use</span>
+          <input
+            type="checkbox"
+            checked={saveForFuture}
+            onChange={(e) => setSaveForFuture(e.target.checked)}
+            aria-label="Save signature for future use"
+          />
+        </label>
+      </div>
 
       {/* Error Display */}
       {error && (
@@ -325,7 +622,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
           className="w-full rounded-md px-4 py-2 bg-[color:var(--color-accent)] text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
           aria-label="Use this signature"
         >
-          {isProcessing ? "Processing..." : "Use Signature"}
+          {isProcessing ? "Processing..." : "Use Signature on Document"}
         </button>
       </div>
     </div>
