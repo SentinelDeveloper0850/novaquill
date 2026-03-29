@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type SignatureKind = "draw" | "type" | "upload";
 
@@ -174,11 +175,6 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
   const strokesRef = useRef<Point[][]>([]);
   const currentStrokeRef = useRef<Point[]>([]);
 
-  const renderedStrokes = useMemo(() => {
-    if (!assistEnabled) return strokesRef.current;
-    return strokesRef.current.map((stroke) => refineStroke(stroke, assistStrength));
-  }, [assistEnabled, assistStrength, mode]);
-
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -201,7 +197,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
 
   useEffect(() => {
     redrawCanvas();
-  }, [redrawCanvas, renderedStrokes, mode]);
+  }, [redrawCanvas, mode]);
 
   useEffect(() => {
     setSavedSignatures(safeReadSavedSignatures());
@@ -339,7 +335,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     safeWriteSavedSignatures(next);
   };
 
-  const useSavedSignature = (dataUrl: string) => {
+  const applySavedSignature = (dataUrl: string) => {
     onSignature(dataUrl);
     setError(null);
   };
@@ -407,12 +403,19 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
                 className="rounded-md border border-foreground/15 p-2 flex items-center justify-between gap-2"
               >
                 <button
-                  onClick={() => useSavedSignature(signature.dataUrl)}
+                  onClick={() => applySavedSignature(signature.dataUrl)}
                   className="flex items-center gap-2 min-w-0 text-left hover:opacity-90"
                   aria-label={`Use saved signature ${signature.name}`}
                 >
                   <div className="h-10 w-24 rounded bg-white border border-foreground/10 flex items-center justify-center overflow-hidden">
-                    <img src={signature.dataUrl} alt={signature.name} className="max-h-full max-w-full object-contain" />
+                    <Image
+                      src={signature.dataUrl}
+                      alt={signature.name}
+                      width={96}
+                      height={40}
+                      className="max-h-full max-w-full object-contain"
+                      unoptimized
+                    />
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs font-medium truncate">{signature.name}</p>
@@ -576,7 +579,14 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
             <div className="rounded-md border border-foreground/15 p-2">
               <p className="text-xs text-foreground/70 mb-2">Preview</p>
               <div className="h-14 bg-white rounded border border-foreground/10 flex items-center justify-center">
-                <img src={uploadedDataUrl} alt="Uploaded signature preview" className="max-h-full max-w-full object-contain" />
+                <Image
+                  src={uploadedDataUrl}
+                  alt="Uploaded signature preview"
+                  width={220}
+                  height={56}
+                  className="max-h-full max-w-full object-contain"
+                  unoptimized
+                />
               </div>
             </div>
           )}

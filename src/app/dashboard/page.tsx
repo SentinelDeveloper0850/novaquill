@@ -8,6 +8,7 @@ import { track } from "@/lib/track";
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46]; // %PDF
@@ -343,7 +344,14 @@ export default function DashboardPage() {
                 tabIndex={0}
                 aria-label="Drag signature placement"
               >
-                <img src={sigDataUrl} alt="Selected signature preview" className="w-full h-auto pointer-events-none" />
+                <Image
+                  src={sigDataUrl}
+                  alt="Selected signature preview"
+                  width={sigWidth}
+                  height={Math.round((sigWidth * 2) / 5)}
+                  className="w-full h-auto pointer-events-none"
+                  unoptimized
+                />
               </div>
             )}
           </div>
