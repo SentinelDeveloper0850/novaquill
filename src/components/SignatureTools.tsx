@@ -10,6 +10,7 @@ const CANVAS_WIDTH = 600;
 const CANVAS_HEIGHT = 200;
 const DRAWING_LINE_WIDTH = 2;
 const DRAWING_COLOR = "#111";
+const ASSIST_STRENGTH = 0.9;
 const MAX_SAVED_SIGNATURES = 8;
 const SIGNATURE_STORAGE_KEY = "novaquill.savedSignatures.v1";
 
@@ -164,16 +165,22 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
   const [font, setFont] = useState("cursive");
   const [name, setName] = useState("");
   const [saveForFuture, setSaveForFuture] = useState(true);
-  const [assistEnabled, setAssistEnabled] = useState(true);
-  const [assistStrength, setAssistStrength] = useState(0.55);
+  const [strokeCount, setStrokeCount] = useState(0);
+  const [redoStrokeCount, setRedoStrokeCount] = useState(0);
   const [savedSignatures, setSavedSignatures] = useState<SavedSignature[]>([]);
   const [uploadedDataUrl, setUploadedDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
-  const strokesRef = useRef<Point[][]>([]);
+  const finalizedStrokesRef = useRef<Point[][]>([]);
+  const redoStrokesRef = useRef<Point[][]>([]);
   const currentStrokeRef = useRef<Point[]>([]);
+
+  const syncStrokeCounts = useCallback(() => {
+    setStrokeCount(finalizedStrokesRef.current.length);
+    setRedoStrokeCount(redoStrokesRef.current.length);
+  }, []);
 
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -188,12 +195,11 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     ctx.lineWidth = DRAWING_LINE_WIDTH;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-
-    const source = assistEnabled
-      ? strokesRef.current.map((stroke) => refineStroke(stroke, assistStrength))
-      : strokesRef.current;
-    source.forEach((stroke) => drawStroke(ctx, stroke));
-  }, [assistEnabled, assistStrength]);
+    finalizedStrokesRef.current.forEach((stroke) => drawStroke(ctx, stroke));
+    if (currentStrokeRef.current.length) {
+      drawStroke(ctx, currentStrokeRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     redrawCanvas();
@@ -204,8 +210,32 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
   }, []);
 
   const clearCanvas = () => {
-    strokesRef.current = [];
+    finalizedStrokesRef.current = [];
+    redoStrokesRef.current = [];
     currentStrokeRef.current = [];
+    syncStrokeCounts();
+    redrawCanvas();
+  };
+
+  const undoStroke = () => {
+    if (!finalizedStrokesRef.current.length || drawingRef.current) return;
+    const nextFinalized = [...finalizedStrokesRef.current];
+    const removed = nextFinalized.pop();
+    if (!removed) return;
+    finalizedStrokesRef.current = nextFinalized;
+    redoStrokesRef.current = [...redoStrokesRef.current, removed];
+    syncStrokeCounts();
+    redrawCanvas();
+  };
+
+  const redoStroke = () => {
+    if (!redoStrokesRef.current.length || drawingRef.current) return;
+    const nextRedo = [...redoStrokesRef.current];
+    const restored = nextRedo.pop();
+    if (!restored) return;
+    redoStrokesRef.current = nextRedo;
+    finalizedStrokesRef.current = [...finalizedStrokesRef.current, restored];
+    syncStrokeCounts();
     redrawCanvas();
   };
 
@@ -234,7 +264,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     
     try {
       if (mode === "draw") {
-        if (!strokesRef.current.length) {
+        if (!finalizedStrokesRef.current.length) {
           throw new Error("Draw your signature first");
         }
         const output = document.createElement("canvas");
@@ -250,11 +280,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
         outputCtx.lineWidth = DRAWING_LINE_WIDTH;
         outputCtx.lineCap = "round";
         outputCtx.lineJoin = "round";
-
-        const source = assistEnabled
-          ? strokesRef.current.map((stroke) => refineStroke(stroke, assistStrength))
-          : strokesRef.current;
-        source.forEach((stroke) => drawStroke(outputCtx, stroke));
+        finalizedStrokesRef.current.forEach((stroke) => drawStroke(outputCtx, stroke));
 
         const cropped = trimCanvas(output);
         const dataUrl = cropped.toDataURL("image/png");
@@ -359,9 +385,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     if (!coords) return;
 
     drawingRef.current = true;
-    const stroke = [coords];
-    currentStrokeRef.current = stroke;
-    strokesRef.current = [...strokesRef.current, stroke];
+    currentStrokeRef.current = [coords];
     redrawCanvas();
   };
 
@@ -372,14 +396,20 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     if (!coords) return;
 
     currentStrokeRef.current = [...currentStrokeRef.current, coords];
-    const strokesWithoutCurrent = strokesRef.current.slice(0, -1);
-    strokesRef.current = [...strokesWithoutCurrent, currentStrokeRef.current];
     redrawCanvas();
   };
 
   const handleEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    if (!drawingRef.current) return;
     drawingRef.current = false;
+    if (currentStrokeRef.current.length > 0) {
+      // Apply cleanup assist once the user lifts the pointer to preserve natural in-stroke drawing.
+      const refined = refineStroke(currentStrokeRef.current, ASSIST_STRENGTH);
+      finalizedStrokesRef.current = [...finalizedStrokesRef.current, refined];
+      redoStrokesRef.current = [];
+      syncStrokeCounts();
+    }
     currentStrokeRef.current = [];
     redrawCanvas();
   };
@@ -469,13 +499,31 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">Draw your signature</span>
-            <button 
-              onClick={clearCanvas}
-              className="text-sm text-foreground/70 hover:text-foreground hover:underline"
-              aria-label="Clear canvas"
-            >
-              Clear
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={undoStroke}
+                disabled={strokeCount === 0 || drawingRef.current}
+                className="text-xs rounded-md border px-2 py-1 hover:bg-foreground/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Undo last stroke"
+              >
+                Undo
+              </button>
+              <button
+                onClick={redoStroke}
+                disabled={redoStrokeCount === 0 || drawingRef.current}
+                className="text-xs rounded-md border px-2 py-1 hover:bg-foreground/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Redo last undone stroke"
+              >
+                Redo
+              </button>
+              <button 
+                onClick={clearCanvas}
+                className="text-sm text-foreground/70 hover:text-foreground hover:underline"
+                aria-label="Clear canvas"
+              >
+                Clear
+              </button>
+            </div>
           </div>
           <div className="border rounded-md inline-block">
             <canvas
@@ -493,36 +541,8 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
               aria-label="Signature drawing canvas"
             />
           </div>
-          <div className="space-y-2">
-            <label className="flex items-center justify-between text-xs">
-              <span className="font-medium">Stroke cleanup assist</span>
-              <input
-                type="checkbox"
-                checked={assistEnabled}
-                onChange={(e) => setAssistEnabled(e.target.checked)}
-                aria-label="Enable stroke cleanup assist"
-              />
-            </label>
-            {assistEnabled && (
-              <div className="space-y-1">
-                <label htmlFor="assist-strength" className="text-xs text-foreground/70">
-                  Assist strength: {(assistStrength * 100).toFixed(0)}%
-                </label>
-                <input
-                  id="assist-strength"
-                  type="range"
-                  min={15}
-                  max={90}
-                  value={Math.round(assistStrength * 100)}
-                  onChange={(e) => setAssistStrength(Number(e.target.value) / 100)}
-                  className="w-full"
-                  aria-label="Stroke cleanup strength"
-                />
-              </div>
-            )}
-          </div>
           <p className="text-xs text-foreground/60">
-            Draw naturally, then optionally smooth rough strokes for a cleaner signature.
+            Cleanup assist is automatically applied at 90% when each stroke ends.
           </p>
         </div>
       )}
