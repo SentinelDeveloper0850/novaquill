@@ -28,13 +28,21 @@ export default function PdfViewer({
 }) {
   const { file } = useUpload();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const onSizeRef = useRef(onSize);
+  const onMetaRef = useRef(onMeta);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [retryToken, setRetryToken] = useState(0);
+
+  useEffect(() => {
+    onSizeRef.current = onSize;
+    onMetaRef.current = onMeta;
+  }, [onSize, onMeta]);
 
   useEffect(() => {
     let cancelled = false;
-    let retryTimeout: NodeJS.Timeout;
+    let retryTimeout: NodeJS.Timeout | undefined;
 
     async function render() {
       if (!file) return;
@@ -49,7 +57,7 @@ export default function PdfViewer({
         
         if (cancelled) return;
         
-        if (onMeta) onMeta({ numPages: pdf.numPages });
+        onMetaRef.current?.({ numPages: pdf.numPages });
         
         const pg = await pdf.getPage(page);
         const viewport = pg.getViewport({ scale });
@@ -70,8 +78,8 @@ export default function PdfViewer({
           viewport 
         }).promise;
         
-        if (!cancelled && onSize) {
-          onSize({ width: viewport.width, height: viewport.height });
+        if (!cancelled) {
+          onSizeRef.current?.({ width: viewport.width, height: viewport.height });
         }
         
         // Reset retry count on success
@@ -85,10 +93,9 @@ export default function PdfViewer({
         
         // Implement retry logic for certain errors
         if (retryCount < MAX_RETRIES && shouldRetry(e)) {
-          setRetryCount(prev => prev + 1);
           retryTimeout = setTimeout(() => {
             if (!cancelled) {
-              render();
+              setRetryCount((prev) => prev + 1);
             }
           }, RETRY_DELAY * (retryCount + 1));
         }
@@ -119,15 +126,16 @@ export default function PdfViewer({
     
     return () => {
       cancelled = true;
-      if (retryTimeout) {
+      if (typeof retryTimeout !== "undefined") {
         clearTimeout(retryTimeout);
       }
     };
-  }, [file, page, scale, onSize, onMeta, retryCount]);
+  }, [file, page, scale, retryCount, retryToken]);
 
   const handleRetry = () => {
     setRetryCount(0);
     setError(null);
+    setRetryToken((prev) => prev + 1);
   };
 
   if (!file) {
@@ -142,15 +150,25 @@ export default function PdfViewer({
   }
 
   return (
-    <div className="w-full overflow-auto">
+    <div className="w-full overflow-auto relative min-h-[280px]">
+      {/* Keep canvas mounted so PDF.js always has a render target */}
+      <canvas
+        ref={canvasRef}
+        className={`max-w-full h-auto block ${error ? "opacity-30" : "opacity-100"}`}
+        role="img"
+        aria-label={`PDF page ${page}`}
+      />
+
       {/* Loading State */}
       {isLoading && (
-        <LoadingSpinner text="Loading PDF..." />
+        <div className="absolute inset-0 flex items-center justify-center bg-background/70">
+          <LoadingSpinner text="Loading PDF..." />
+        </div>
       )}
 
       {/* Error State */}
       {error && !isLoading && (
-        <div className="flex items-center justify-center h-64">
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80 p-4">
           <div className="text-center max-w-md">
             <div className="text-4xl mb-3">⚠️</div>
             <p className="text-red-600 mb-3">{error}</p>
@@ -169,16 +187,6 @@ export default function PdfViewer({
             )}
           </div>
         </div>
-      )}
-
-      {/* PDF Canvas */}
-      {!isLoading && !error && (
-        <canvas 
-          ref={canvasRef} 
-          className="max-w-full h-auto block" 
-          role="img"
-          aria-label={`PDF page ${page}`}
-        />
       )}
     </div>
   );
