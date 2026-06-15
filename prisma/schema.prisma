@@ -21,6 +21,7 @@ model User {
   accounts      Account[]
   sessions      Session[]
   documents     Document[]
+  savedSignatures SavedSignature[]
 
   // Subscription and usage tracking
   subscription  SubscriptionStatus @default(FREE)
@@ -87,6 +88,21 @@ model Document {
   size      Int
   path      String
   createdAt DateTime @default(now())
+}
+
+model SavedSignature {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  mimeType      String
+  encryptedPayload Bytes
+  hash          String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@unique([userId, hash])
 }
 
 // Privacy-preserving analytics: simple counters by event name (no PII)

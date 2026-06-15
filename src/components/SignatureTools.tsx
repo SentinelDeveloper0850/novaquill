@@ -12,14 +12,13 @@ const DRAWING_LINE_WIDTH = 2;
 const DRAWING_COLOR = "#111";
 const ASSIST_STRENGTH = 0.9;
 const MAX_SAVED_SIGNATURES = 8;
-const SIGNATURE_STORAGE_KEY = "novaquill.savedSignatures.v1";
 
 type Point = { x: number; y: number };
 type SavedSignature = {
   id: string;
   name: string;
   dataUrl: string;
-  createdAt: string;
+  createdAt: string | Date;
 };
 
 function distance(a: Point, b: Point): number {
@@ -135,30 +134,6 @@ function trimCanvas(canvas: HTMLCanvasElement, padding = 10): HTMLCanvasElement 
   return out;
 }
 
-function safeReadSavedSignatures(): SavedSignature[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(SIGNATURE_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as SavedSignature[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item) =>
-        typeof item?.id === "string" &&
-        typeof item?.name === "string" &&
-        typeof item?.dataUrl === "string" &&
-        typeof item?.createdAt === "string"
-    );
-  } catch {
-    return [];
-  }
-}
-
-function safeWriteSavedSignatures(signatures: SavedSignature[]): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(SIGNATURE_STORAGE_KEY, JSON.stringify(signatures.slice(0, MAX_SAVED_SIGNATURES)));
-}
-
 export default function SignatureTools({ onSignature }: { onSignature: (dataUrl: string) => void }) {
   const [mode, setMode] = useState<SignatureKind>("draw");
   const [typed, setTyped] = useState("");
@@ -168,6 +143,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
   const [strokeCount, setStrokeCount] = useState(0);
   const [redoStrokeCount, setRedoStrokeCount] = useState(0);
   const [savedSignatures, setSavedSignatures] = useState<SavedSignature[]>([]);
+  const [isLoadingSaved, setIsLoadingSaved] = useState(true);
   const [uploadedDataUrl, setUploadedDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -206,7 +182,32 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
   }, [redrawCanvas, mode]);
 
   useEffect(() => {
-    setSavedSignatures(safeReadSavedSignatures());
+    let cancelled = false;
+    async function loadSavedSignatures() {
+      setIsLoadingSaved(true);
+      try {
+        const response = await fetch("/api/signatures", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Failed to load saved signatures");
+        }
+        const payload = (await response.json()) as { signatures?: SavedSignature[] };
+        if (!cancelled) {
+          setSavedSignatures((payload.signatures || []).slice(0, MAX_SAVED_SIGNATURES));
+        }
+      } catch {
+        if (!cancelled) {
+          setSavedSignatures([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingSaved(false);
+        }
+      }
+    }
+    loadSavedSignatures();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const clearCanvas = () => {
@@ -239,23 +240,22 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
     redrawCanvas();
   };
 
-  const saveSignatureIfNeeded = (dataUrl: string) => {
+  const saveSignatureIfNeeded = async (dataUrl: string) => {
     if (!saveForFuture) return;
-    const existing = safeReadSavedSignatures();
-    if (existing.some((item) => item.dataUrl === dataUrl)) {
-      setSavedSignatures(existing);
-      return;
-    }
     const trimmedName = name.trim();
-    const newSignature: SavedSignature = {
-      id: crypto.randomUUID(),
-      name: trimmedName || `Signature ${existing.length + 1}`,
-      dataUrl,
-      createdAt: new Date().toISOString(),
-    };
-    const next = [newSignature, ...existing].slice(0, MAX_SAVED_SIGNATURES);
-    safeWriteSavedSignatures(next);
-    setSavedSignatures(next);
+    const response = await fetch("/api/signatures", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl, name: trimmedName || undefined }),
+    });
+    if (!response.ok) {
+      throw new Error("Failed to save signature");
+    }
+    const payload = (await response.json()) as { signature: SavedSignature };
+    setSavedSignatures((prev) => {
+      const withoutDup = prev.filter((item) => item.id !== payload.signature.id);
+      return [payload.signature, ...withoutDup].slice(0, MAX_SAVED_SIGNATURES);
+    });
   };
 
   const toDataUrl = async () => {
@@ -285,7 +285,7 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
         const cropped = trimCanvas(output);
         const dataUrl = cropped.toDataURL("image/png");
         onSignature(dataUrl);
-        saveSignatureIfNeeded(dataUrl);
+        await saveSignatureIfNeeded(dataUrl);
       } else if (mode === "type") {
         if (!typed.trim()) {
           throw new Error("Please enter text for your signature");
@@ -310,13 +310,13 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
         const cropped = trimCanvas(canvas);
         const dataUrl = cropped.toDataURL("image/png");
         onSignature(dataUrl);
-        saveSignatureIfNeeded(dataUrl);
+        await saveSignatureIfNeeded(dataUrl);
       } else if (mode === "upload") {
         if (!uploadedDataUrl) {
           throw new Error("Please select an image file first");
         }
         onSignature(uploadedDataUrl);
-        saveSignatureIfNeeded(uploadedDataUrl);
+        await saveSignatureIfNeeded(uploadedDataUrl);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create signature";
@@ -356,9 +356,16 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
   };
 
   const removeSavedSignature = (id: string) => {
-    const next = savedSignatures.filter((item) => item.id !== id);
-    setSavedSignatures(next);
-    safeWriteSavedSignatures(next);
+    fetch(`/api/signatures?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Failed to remove signature");
+        }
+        setSavedSignatures((prev) => prev.filter((item) => item.id !== id));
+      })
+      .catch(() => {
+        setError("Failed to remove saved signature");
+      });
   };
 
   const applySavedSignature = (dataUrl: string) => {
@@ -421,7 +428,9 @@ export default function SignatureTools({ onSignature }: { onSignature: (dataUrl:
           <h3 className="text-sm font-semibold">Saved signatures</h3>
           <span className="text-xs text-foreground/60">{savedSignatures.length} saved</span>
         </div>
-        {savedSignatures.length === 0 ? (
+        {isLoadingSaved ? (
+          <p className="text-xs text-foreground/65">Loading saved signatures...</p>
+        ) : savedSignatures.length === 0 ? (
           <p className="text-xs text-foreground/65">
             Save a signature once and reuse it instantly in future documents.
           </p>
