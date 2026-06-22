@@ -1,12 +1,13 @@
 "use client";
 import PdfViewer from "@/components/PdfViewer";
 import SignatureTools from "@/components/SignatureTools";
+import DocumentFillLayer, { type TextElement } from "@/components/DocumentFillLayer";
 import { useState } from "react";
 import Finalizer from "./Finalizer";
-import Image from "next/image";
 
 // Constants
 const INITIAL_SIGNATURE_POSITION = { x: 20, y: 20 };
+const INITIAL_SIGNATURE_SIZE = { width: 200, height: 80 };
 const INITIAL_SCALE = 1.2;
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 3.0;
@@ -16,14 +17,15 @@ export default function SignPage() {
   const [pdfSize, setPdfSize] = useState<{ width: number; height: number } | null>(null);
   const [sigDataUrl, setSigDataUrl] = useState<string | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number }>(INITIAL_SIGNATURE_POSITION);
-  const [drag, setDrag] = useState(false);
+  const [signatureSize, setSignatureSize] = useState(INITIAL_SIGNATURE_SIZE);
   const [page, setPage] = useState(1);
   const [numPages, setNumPages] = useState(1);
   const [scale, setScale] = useState(INITIAL_SCALE);
+  const [textElements, setTextElements] = useState<TextElement[]>([]);
 
-  const handleScaleChange = (direction: 'increase' | 'decrease') => {
+  const handleScaleChange = (direction: "increase" | "decrease") => {
     setScale((currentScale) => {
-      if (direction === 'increase') {
+      if (direction === "increase") {
         return Math.min(MAX_SCALE, currentScale + SCALE_STEP);
       } else {
         return Math.max(MIN_SCALE, currentScale - SCALE_STEP);
@@ -31,9 +33,9 @@ export default function SignPage() {
     });
   };
 
-  const handlePageChange = (direction: 'next' | 'prev') => {
+  const handlePageChange = (direction: "next" | "prev") => {
     setPage((currentPage) => {
-      if (direction === 'next') {
+      if (direction === "next") {
         return Math.min(numPages, currentPage + 1);
       } else {
         return Math.max(1, currentPage - 1);
@@ -41,86 +43,123 @@ export default function SignPage() {
     });
   };
 
+  const handleAddText = () => {
+    if (!pdfSize) return;
+    const width = Math.min(220, Math.max(80, pdfSize.width - 60));
+    setTextElements((current) => [
+      ...current,
+      {
+        id: `text-${Date.now()}`,
+        page,
+        x: 30,
+        y: 30,
+        width,
+        height: 36,
+        text: "",
+        fontSize: 14,
+      },
+    ]);
+  };
+
+  const handleSignature = (dataUrl: string) => {
+    setSigDataUrl(dataUrl);
+    setPos(INITIAL_SIGNATURE_POSITION);
+    setSignatureSize(INITIAL_SIGNATURE_SIZE);
+  };
+
+  const clearSignature = () => {
+    setSigDataUrl(null);
+    setPos(INITIAL_SIGNATURE_POSITION);
+    setSignatureSize(INITIAL_SIGNATURE_SIZE);
+  };
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       <h1 className="text-2xl font-semibold mb-4">Sign Document</h1>
       <div className="grid lg:grid-cols-[1fr_320px] gap-6 items-start">
-        <div className="relative border rounded-md overflow-auto p-3">
-          <div className="flex items-center gap-3 mb-3">
-            <button 
-              className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors" 
-              onClick={() => handleScaleChange('decrease')}
+        <div className="border rounded-md overflow-auto p-3">
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <button
+              className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors"
+              onClick={() => handleScaleChange("decrease")}
               aria-label="Zoom out"
             >
               -
             </button>
             <div className="text-sm">Zoom {(scale * 100).toFixed(0)}%</div>
-            <button 
-              className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors" 
-              onClick={() => handleScaleChange('increase')}
+            <button
+              className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors"
+              onClick={() => handleScaleChange("increase")}
               aria-label="Zoom in"
             >
               +
             </button>
-            <div className="ml-4 flex items-center gap-2">
-              <button 
-                className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors" 
-                onClick={() => handlePageChange('prev')}
+            <div className="ml-0 sm:ml-4 flex items-center gap-2">
+              <button
+                className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => handlePageChange("prev")}
                 disabled={page <= 1}
                 aria-label="Previous page"
               >
                 Prev
               </button>
               <div className="text-sm">Page {page} / {numPages}</div>
-              <button 
-                className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors" 
-                onClick={() => handlePageChange('next')}
+              <button
+                className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => handlePageChange("next")}
                 disabled={page >= numPages}
                 aria-label="Next page"
               >
                 Next
               </button>
             </div>
-          </div>
-          <PdfViewer onSize={setPdfSize} onMeta={({ numPages }) => setNumPages(numPages)} page={page} scale={scale} />
-          {sigDataUrl && pdfSize && (
-            <div
-              className="absolute cursor-move"
-              style={{ left: pos.x, top: pos.y }}
-              onMouseDown={() => setDrag(true)}
-              onMouseUp={() => setDrag(false)}
-              onMouseMove={(e) => {
-                if (!drag) return;
-                const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-                const x = e.clientX - rect.left - 50;
-                const y = e.clientY - rect.top - 20;
-                setPos({ 
-                  x: Math.max(0, Math.min(x, rect.width - 100)), 
-                  y: Math.max(0, Math.min(y, rect.height - 40)) 
-                });
-              }}
+            <button
+              className="rounded-md border px-3 py-1 hover:bg-foreground/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleAddText}
+              disabled={!pdfSize}
+              aria-label="Add text to document"
             >
-              <Image 
-                src={sigDataUrl} 
-                alt="Signature" 
-                width={200}
-                height={80}
-                className="select-none" 
-                draggable={false}
-                unoptimized
+              Add Text
+            </button>
+          </div>
+
+          <div className="relative inline-block min-w-fit">
+            <PdfViewer onSize={setPdfSize} onMeta={({ numPages }) => setNumPages(numPages)} page={page} scale={scale} />
+            {pdfSize && (
+              <DocumentFillLayer
+                pdfSize={pdfSize}
+                page={page}
+                sigDataUrl={sigDataUrl}
+                signaturePosition={pos}
+                signatureSize={signatureSize}
+                textElements={textElements}
+                onSignaturePositionChange={setPos}
+                onSignatureSizeChange={setSignatureSize}
+                onTextElementsChange={setTextElements}
+                onClearSignature={clearSignature}
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
         <div className="sticky top-6">
-          <SignatureTools onSignature={setSigDataUrl} />
+          <SignatureTools onSignature={handleSignature} />
+          <div className="mt-4 text-xs text-foreground/60">
+            Use Add Text to fill the document. After creating a signature, drag it into place and use the corner handle to resize it.
+          </div>
           <div className="mt-4">
-            <Finalizer sigDataUrl={sigDataUrl} page={page} x={pos.x} y={pos.y} width={200} />
+            <Finalizer
+              sigDataUrl={sigDataUrl}
+              page={page}
+              x={pos.x}
+              y={pos.y}
+              width={signatureSize.width}
+              height={signatureSize.height}
+              textElements={textElements}
+              pdfViewportSize={pdfSize}
+            />
           </div>
         </div>
       </div>
     </div>
   );
 }
-
-
