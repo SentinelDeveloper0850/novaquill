@@ -1,6 +1,6 @@
 "use client";
 
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { useUpload } from "@/context/UploadContext";
 import { track } from "@/lib/track";
 import { useState } from "react";
@@ -9,26 +9,50 @@ import LoadingSpinnerSmall from "@/components/LoadingSpinner";
 // Constants
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB for processing
 
-export default function Finalizer({ 
-  sigDataUrl, 
-  page = 1, 
-  x = 20, 
-  y = 20, 
-  width = 200 
-}: { 
-  sigDataUrl: string | null; 
-  page: number; 
-  x: number; 
-  y: number; 
-  width: number; 
+type TextElement = {
+  id: string;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  text: string;
+  fontSize: number;
+};
+
+type ViewportSize = { width: number; height: number };
+
+export default function Finalizer({
+  sigDataUrl,
+  page = 1,
+  x = 20,
+  y = 20,
+  width = 200,
+  height: signatureHeight = 80,
+  textElements = [],
+  pdfViewportSize,
+}: {
+  sigDataUrl: string | null;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height?: number;
+  textElements?: TextElement[];
+  pdfViewportSize?: ViewportSize | null;
 }) {
   const { file } = useUpload();
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function onDownload() {
-    if (!file || !sigDataUrl) {
-      setError("Missing file or signature");
+    if (!file) {
+      setError("Missing file");
+      return;
+    }
+
+    if (!sigDataUrl && textElements.length === 0) {
+      setError("Add a signature or text before downloading");
       return;
     }
 
@@ -60,27 +84,50 @@ export default function Finalizer({
       // Process PDF
       const pdfBytes = new Uint8Array(await file.arrayBuffer());
       const pdfDoc = await PDFDocument.load(pdfBytes);
-      
-      // Embed signature image
-      const pngBytes = await fetch(sigDataUrl).then((r) => {
-        if (!r.ok) throw new Error("Failed to fetch signature image");
-        return r.arrayBuffer();
-      });
-      
-      const png = await pdfDoc.embedPng(pngBytes);
       const pages = pdfDoc.getPages();
-      const target = pages[Math.max(0, Math.min(page - 1, pages.length - 1))];
-      const pngDims = png.scale(width / png.width);
-      const { height } = target.getSize();
-      
-      // Position signature (adjust Y coordinate for PDF coordinate system)
-      target.drawImage(png, { 
-        x, 
-        y: height - y - pngDims.height, 
-        width: pngDims.width, 
-        height: pngDims.height 
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+      const getPageScales = (targetPageIndex: number) => {
+        const target = pages[targetPageIndex]!;
+        const targetSize = target.getSize();
+        const scaleX = pdfViewportSize ? targetSize.width / pdfViewportSize.width : 1;
+        const scaleY = pdfViewportSize ? targetSize.height / pdfViewportSize.height : 1;
+        return { target, targetSize, scaleX, scaleY };
+      };
+
+      textElements.forEach((item) => {
+        if (!item.text.trim()) return;
+        const targetPageIndex = Math.max(0, Math.min(item.page - 1, pages.length - 1));
+        const { target, targetSize, scaleX, scaleY } = getPageScales(targetPageIndex);
+        target.drawText(item.text.trim(), {
+          x: item.x * scaleX,
+          y: targetSize.height - (item.y + item.height) * scaleY + 8 * scaleY,
+          size: item.fontSize * scaleY,
+          font,
+          color: rgb(0, 0, 0),
+          maxWidth: item.width * scaleX,
+        });
       });
-      
+
+      if (sigDataUrl) {
+        // Embed signature image
+        const pngBytes = await fetch(sigDataUrl).then((r) => {
+          if (!r.ok) throw new Error("Failed to fetch signature image");
+          return r.arrayBuffer();
+        });
+
+        const png = await pdfDoc.embedPng(pngBytes);
+        const targetPageIndex = Math.max(0, Math.min(page - 1, pages.length - 1));
+        const { target, targetSize, scaleX, scaleY } = getPageScales(targetPageIndex);
+
+        target.drawImage(png, {
+          x: x * scaleX,
+          y: targetSize.height - (y + signatureHeight) * scaleY,
+          width: width * scaleX,
+          height: signatureHeight * scaleY,
+        });
+      }
+
       const out = await pdfDoc.save();
       const abCopy = new ArrayBuffer(out.byteLength);
       new Uint8Array(abCopy).set(out);
@@ -89,8 +136,8 @@ export default function Finalizer({
       // Try to store for logged-in users
       try {
         const form = new FormData();
-        form.append("file", blob, "signed.pdf");
-        form.append("filename", "signed.pdf");
+        form.append("file", blob, `completed-${file.name}`);
+        form.append("filename", `completed-${file.name}`);
         const resp = await fetch("/api/documents/create", { method: "POST", body: form });
         if (!resp.ok) {
           console.warn("Document storage failed:", resp.status);
@@ -105,14 +152,13 @@ export default function Finalizer({
       track("finalize_download");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; 
-      a.download = "signed.pdf"; 
+      a.href = url;
+      a.download = `completed-${file.name}`;
       a.click();
       URL.revokeObjectURL(url);
 
       // Show success message
       setError(null);
-      
     } catch (err) {
       console.error("PDF processing error:", err);
       const message = err instanceof Error ? err.message : "Failed to process PDF";
@@ -121,6 +167,8 @@ export default function Finalizer({
       setIsProcessing(false);
     }
   }
+
+  const canDownload = Boolean(sigDataUrl) || textElements.length > 0;
 
   return (
     <div className="space-y-3">
@@ -135,13 +183,13 @@ export default function Finalizer({
       )}
 
       {/* Download Button */}
-      <button 
-        onClick={onDownload} 
-        disabled={!sigDataUrl || isProcessing}
+      <button
+        onClick={onDownload}
+        disabled={!canDownload || isProcessing}
         className="w-full rounded-md px-4 py-2 bg-[color:var(--color-accent)] text-white disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
-        aria-label="Download signed PDF"
+        aria-label="Download completed PDF"
       >
-        {isProcessing ? "Processing..." : "Download Signed PDF"}
+        {isProcessing ? "Processing..." : "Download Completed PDF"}
       </button>
 
       {/* Processing Info */}
@@ -152,13 +200,11 @@ export default function Finalizer({
       )}
 
       {/* Requirements */}
-      {!sigDataUrl && (
+      {!canDownload && (
         <div className="text-xs text-foreground/60 text-center">
-          Create a signature first to enable download
+          Add a signature or text to enable download
         </div>
       )}
     </div>
   );
 }
-
-
